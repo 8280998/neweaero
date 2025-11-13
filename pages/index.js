@@ -49,7 +49,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
   const [amount, setAmount] = useState(10000);
 
   // Merger calculations
-  const totalNewTokens = 10000000000; // 10 billion
+  const totalNewTokens = 2000000000; // 2 billion
   const aeroAllocation = totalNewTokens * 0.945;
   const veloAllocation = totalNewTokens * 0.055;
 
@@ -138,7 +138,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
             </tr>
           </tbody>
         </table>
-        <h2>Merger Allocations (Based on 10 Billion New Tokens)</h2>
+        <h2>Merger Allocations (Based on 2 Billion New Tokens)</h2>
         <p>AERO Allocation: {aeroAllocation.toLocaleString()} tokens (94.5%)</p>
         <p>VELO Allocation: {veloAllocation.toLocaleString()} tokens (5.5%)</p>
       </div>
