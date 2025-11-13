@@ -52,9 +52,9 @@ export async function getServerSideProps() {
 export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, veloSupply }) {
   const [aeroPrice, setAeroPrice] = useState(initialAeroPrice);
   const [veloPrice, setVeloPrice] = useState(initialVeloPrice);
-  const [aeroAmount, setAeroAmount] = useState(0);
-  const [veloAmount, setVeloAmount] = useState(0);
-  const [totalNewTokens, setTotalNewTokens] = useState(10000000000); // Default 10 billion
+  const [aeroAmount, setAeroAmount] = useState(10000);
+  const [veloAmount, setVeloAmount] = useState(200000);
+  const [totalNewTokens, setTotalNewTokens] = useState(2000000000); // Default 2 billion
 
   // Merger calculations
   const aeroAllocation = totalNewTokens * 0.945;
