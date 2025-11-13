@@ -52,10 +52,11 @@ export async function getServerSideProps() {
 export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, veloSupply }) {
   const [aeroPrice, setAeroPrice] = useState(initialAeroPrice);
   const [veloPrice, setVeloPrice] = useState(initialVeloPrice);
-  const [amount, setAmount] = useState(10000);
+  const [aeroAmount, setAeroAmount] = useState(0);
+  const [veloAmount, setVeloAmount] = useState(0);
+  const [totalNewTokens, setTotalNewTokens] = useState(10000000000); // Default 10 billion
 
   // Merger calculations
-  const totalNewTokens = 2000000000; // 2 billion
   const aeroAllocation = totalNewTokens * 0.945;
   const veloAllocation = totalNewTokens * 0.055;
 
@@ -65,8 +66,9 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
   const aeroImpliedPrice = aeroPerNew * aeroPrice;
   const veloImpliedPrice = veloPerNew * veloPrice;
 
-  const aeroNewForInput = (amount / aeroSupply) * aeroAllocation;
-  const veloNewForInput = (amount / veloSupply) * veloAllocation;
+  const aeroNewForInput = (aeroAmount / aeroSupply) * aeroAllocation;
+  const veloNewForInput = (veloAmount / veloSupply) * veloAllocation;
+  const totalNewForInput = aeroNewForInput + veloNewForInput;
 
   useEffect(() => {
     const ws = new WebSocket('wss://advanced-trade-ws.coinbase.com');
@@ -101,16 +103,30 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
     };
   }, []);
 
-  const handleAmountChange = (e) => {
-    setAmount(parseFloat(e.target.value) || 0);
+  const handleAeroAmountChange = (e) => {
+    setAeroAmount(parseFloat(e.target.value) || 0);
+  };
+
+  const handleVeloAmountChange = (e) => {
+    setVeloAmount(parseFloat(e.target.value) || 0);
+  };
+
+  const handleTotalNewTokensChange = (e) => {
+    setTotalNewTokens(parseFloat(e.target.value) || 10000000000);
   };
 
   return (
     <div style={{ fontFamily: 'Arial, sans-serif', margin: '20px' }}>
       <h1>AERO/VELO Merger Calculator</h1>
       <div id="input-section" style={{ marginBottom: '20px' }}>
-        <label htmlFor="amount">Enter Amount:</label>
-        <input type="number" id="amount" value={amount} onChange={handleAmountChange} min="0" />
+        <label htmlFor="aero-amount">Enter AERO Amount:</label>
+        <input type="number" id="aero-amount" value={aeroAmount} onChange={handleAeroAmountChange} min="0" />
+        <br /><br />
+        <label htmlFor="velo-amount">Enter VELO Amount:</label>
+        <input type="number" id="velo-amount" value={veloAmount} onChange={handleVeloAmountChange} min="0" />
+        <br /><br />
+        <label htmlFor="total-new-tokens">Enter Total New Tokens:</label>
+        <input type="number" id="total-new-tokens" value={totalNewTokens} onChange={handleTotalNewTokensChange} min="0" />
       </div>
       <div id="results">
         <h2>Real-Time Data</h2>
@@ -144,9 +160,11 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
             </tr>
           </tbody>
         </table>
-        <h2>Merger Allocations (Based on 2 Billion New Tokens)</h2>
+        <h2>Merger Allocations (Based on Custom Total New Tokens)</h2>
         <p>AERO Allocation: {aeroAllocation.toLocaleString()} tokens (94.5%)</p>
         <p>VELO Allocation: {veloAllocation.toLocaleString()} tokens (5.5%)</p>
+        <h2>Total New Tokens You Can Get</h2>
+        <p>{totalNewForInput.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
       </div>
     </div>
   );
