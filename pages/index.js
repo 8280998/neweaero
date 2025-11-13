@@ -1,26 +1,32 @@
 // pages/index.js
 import { useEffect, useState } from 'react';
+import { ethers } from 'ethers';
 
 export async function getServerSideProps() {
   try {
+    // Fetch supplies on-chain
+    const baseProvider = new ethers.JsonRpcProvider('https://mainnet.base.org');
+    const optimismProvider = new ethers.JsonRpcProvider('https://mainnet.optimism.io');
+    const erc20Abi = ['function totalSupply() external view returns (uint256)'];
+    
+    const aeroContract = new ethers.Contract('0x940181a94a35a4569e4529a3cdfb74e38fd98631', erc20Abi, baseProvider);
+    const veloContract = new ethers.Contract('0x9560e827af36c94d2ac33a39bce1fe78631088db', erc20Abi, optimismProvider);
+    
+    const aeroSupplyRaw = await aeroContract.totalSupply();
+    const veloSupplyRaw = await veloContract.totalSupply();
+    
+    const aeroSupply = Number(ethers.formatUnits(aeroSupplyRaw, 18));
+    const veloSupply = Number(ethers.formatUnits(veloSupplyRaw, 18));
+
     // Fetch AERO price from Coinbase
     const aeroPriceRes = await fetch('https://api.coinbase.com/v2/prices/AERO-USD/spot');
     const aeroPriceData = await aeroPriceRes.json();
-    const aeroPrice = parseFloat(aeroPriceData.data.amount);
+    const aeroPrice = parseFloat(aeroPriceData.data?.amount || 0);
 
     // Fetch VELO price from Coinbase
     const veloPriceRes = await fetch('https://api.coinbase.com/v2/prices/VELO-USD/spot');
     const veloPriceData = await veloPriceRes.json();
-    const veloPrice = parseFloat(veloPriceData.data.amount);
-
-    // Fetch supplies from CoinGecko
-    const aeroSupplyRes = await fetch('https://api.coingecko.com/api/v3/coins/aerodrome-finance');
-    const aeroSupplyData = await aeroSupplyRes.json();
-    const aeroSupply = aeroSupplyData.market_data.total_supply;
-
-    const veloSupplyRes = await fetch('https://api.coingecko.com/api/v3/coins/velodrome-finance');
-    const veloSupplyData = await veloSupplyRes.json();
-    const veloSupply = veloSupplyData.market_data.total_supply;
+    const veloPrice = parseFloat(veloPriceData.data?.amount || 0);
 
     return {
       props: {
