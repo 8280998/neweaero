@@ -2,6 +2,12 @@
 import { useEffect, useState } from 'react';
 import { ethers } from 'ethers';
 
+const HISTORY_RANGES = [
+  { key: '1', label: '24H' },
+  { key: '7', label: '7D' },
+  { key: '30', label: '30D' },
+];
+
 export async function getServerSideProps() {
   try {
     // Fetch supplies on-chain
@@ -55,6 +61,10 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
   const [aeroAmount, setAeroAmount] = useState(10000);
   const [veloAmount, setVeloAmount] = useState(200000);
   const [totalNewTokens, setTotalNewTokens] = useState(2000000000); // Default 2 billion
+  const [historyRange, setHistoryRange] = useState('7');
+  const [historySeries, setHistorySeries] = useState([]);
+  const [historyStatus, setHistoryStatus] = useState('idle');
+  const [historyError, setHistoryError] = useState('');
 
   const formatCurrency = (value, digits = 4) => (
     `$${Number.isFinite(value) ? value.toLocaleString(undefined, {
@@ -101,6 +111,32 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
       isBest: cheaperRoute === 'VELO',
     },
   ];
+  const historyMax = historySeries.length > 0 ? Math.max(...historySeries.map((point) => point.edge), 0.0001) : 1;
+  const historyMin = historySeries.length > 0 ? Math.min(...historySeries.map((point) => point.edge), 0) : 0;
+  const historyLatest = historySeries.length > 0 ? historySeries[historySeries.length - 1].edge : 0;
+  const historyPeak = historySeries.length > 0 ? Math.max(...historySeries.map((point) => point.edge)) : 0;
+  const historyAverage = historySeries.length > 0
+    ? historySeries.reduce((sum, point) => sum + point.edge, 0) / historySeries.length
+    : 0;
+  const historySpread = Math.max(historyMax - historyMin, 0.0001);
+  const historyPath = historySeries.map((point, index) => {
+    const x = (index / Math.max(historySeries.length - 1, 1)) * 100;
+    const y = 100 - ((point.edge - historyMin) / historySpread) * 100;
+    return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
+  }).join(' ');
+  const historyAreaPath = historySeries.length > 0
+    ? `${historyPath} L 100 100 L 0 100 Z`
+    : '';
+  const historyTickValues = [historyMax, historyMin + historySpread / 2, historyMin];
+
+  const formatHistoryLabel = (timestamp) => {
+    const days = Number(historyRange);
+    const options = days === 1
+      ? { hour: '2-digit', minute: '2-digit' }
+      : { month: 'short', day: 'numeric' };
+
+    return new Date(timestamp).toLocaleString(undefined, options);
+  };
 
   useEffect(() => {
     const ws = new WebSocket('wss://advanced-trade-ws.coinbase.com');
@@ -134,6 +170,77 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
       ws.close();
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchHistoricalArbitrage() {
+      setHistoryStatus('loading');
+      setHistoryError('');
+
+      try {
+        const [aeroHistoryRes, veloHistoryRes] = await Promise.all([
+          fetch(`https://api.coingecko.com/api/v3/coins/aerodrome-finance/market_chart?vs_currency=usd&days=${historyRange}&interval=${historyRange === '1' ? 'hourly' : 'daily'}`),
+          fetch(`https://api.coingecko.com/api/v3/coins/velodrome-finance/market_chart?vs_currency=usd&days=${historyRange}&interval=${historyRange === '1' ? 'hourly' : 'daily'}`),
+        ]);
+
+        if (!aeroHistoryRes.ok || !veloHistoryRes.ok) {
+          throw new Error('Unable to load historical market data.');
+        }
+
+        const [aeroHistoryData, veloHistoryData] = await Promise.all([
+          aeroHistoryRes.json(),
+          veloHistoryRes.json(),
+        ]);
+
+        const bucketSize = historyRange === '1' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+        const normalizePrices = (prices) => prices.reduce((acc, [timestamp, price]) => {
+          const bucket = Math.round(timestamp / bucketSize) * bucketSize;
+          acc.set(bucket, price);
+          return acc;
+        }, new Map());
+
+        const aeroMap = normalizePrices(aeroHistoryData.prices || []);
+        const veloMap = normalizePrices(veloHistoryData.prices || []);
+        const alignedTimestamps = [...aeroMap.keys()].filter((timestamp) => veloMap.has(timestamp)).sort((a, b) => a - b);
+
+        const nextSeries = alignedTimestamps.map((timestamp) => {
+          const historicalAeroPrice = aeroMap.get(timestamp);
+          const historicalVeloPrice = veloMap.get(timestamp);
+          const historicalAeroImplied = aeroPerNew * historicalAeroPrice;
+          const historicalVeloImplied = veloPerNew * historicalVeloPrice;
+          const low = Math.min(historicalAeroImplied, historicalVeloImplied);
+          const high = Math.max(historicalAeroImplied, historicalVeloImplied);
+          const edge = low > 0 ? ((high - low) / low) * 100 : 0;
+
+          return {
+            timestamp,
+            edge,
+            label: formatHistoryLabel(timestamp),
+          };
+        });
+
+        if (!cancelled) {
+          setHistorySeries(nextSeries);
+          setHistoryStatus('ready');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setHistorySeries([]);
+          setHistoryStatus('error');
+          setHistoryError(error.message || 'Unable to load historical market data.');
+        }
+      }
+    }
+
+    if (aeroPerNew > 0 && veloPerNew > 0) {
+      fetchHistoricalArbitrage();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [historyRange, aeroPerNew, veloPerNew]);
 
   const handleAeroAmountChange = (e) => {
     setAeroAmount(parseFloat(e.target.value) || 0);
@@ -279,6 +386,117 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
               <p style={{ marginBottom: 0, color: '#5f6f8a' }}>
                 {cheaperRoute} currently offers the cheaper synthetic entry into the merged token. The implied-price gap is {formatCurrency(arbitrageSpread)} or {arbitrageEdge.toFixed(2)}%.
               </p>
+            </div>
+          </div>
+
+          <div style={{
+            background: '#fff',
+            border: '1px solid #d8dfeb',
+            borderRadius: '18px',
+            padding: '20px',
+            boxShadow: '0 18px 45px rgba(23, 32, 51, 0.08)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Historical Arbitrage %</h2>
+                <p style={{ margin: '8px 0 0', color: '#5f6f8a' }}>
+                  The line shows the historical percentage gap between the cheaper and richer implied merged-token route.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {HISTORY_RANGES.map((range) => (
+                  <button
+                    key={range.key}
+                    type="button"
+                    onClick={() => setHistoryRange(range.key)}
+                    style={{
+                      padding: '9px 14px',
+                      borderRadius: '999px',
+                      border: historyRange === range.key ? '1px solid #2563eb' : '1px solid #d8dfeb',
+                      background: historyRange === range.key ? '#2563eb' : '#fff',
+                      color: historyRange === range.key ? '#fff' : '#172033',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {range.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px', marginBottom: '18px' }}>
+              <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
+                <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Latest</div>
+                <div style={{ fontSize: '28px', fontWeight: 700 }}>{historyLatest.toFixed(2)}%</div>
+              </div>
+              <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
+                <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Peak</div>
+                <div style={{ fontSize: '28px', fontWeight: 700 }}>{historyPeak.toFixed(2)}%</div>
+              </div>
+              <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
+                <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Average</div>
+                <div style={{ fontSize: '28px', fontWeight: 700 }}>{historyAverage.toFixed(2)}%</div>
+              </div>
+            </div>
+
+            <div style={{ border: '1px solid #d8dfeb', borderRadius: '16px', padding: '18px', background: 'linear-gradient(180deg, #fbfcff 0%, #f3f7ff 100%)' }}>
+              {historyStatus === 'loading' && (
+                <p style={{ margin: 0, color: '#5f6f8a' }}>Loading historical arbitrage data...</p>
+              )}
+              {historyStatus === 'error' && (
+                <p style={{ margin: 0, color: '#b42318' }}>{historyError}</p>
+              )}
+              {historyStatus === 'ready' && historySeries.length > 1 && (
+                <>
+                  <div style={{ width: '100%', overflowX: 'auto' }}>
+                    <svg viewBox="0 0 760 320" style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="Historical arbitrage percent chart">
+                      <rect x="0" y="0" width="760" height="320" rx="24" fill="#fbfcff" />
+                      {[52, 140, 228].map((y, index) => (
+                        <g key={y}>
+                          <line x1="72" y1={y} x2="720" y2={y} stroke="#d8dfeb" strokeDasharray="4 6" />
+                          <text x="60" y={y + 4} textAnchor="end" fill="#5f6f8a" fontSize="12">
+                            {historyTickValues[index].toFixed(2)}%
+                          </text>
+                        </g>
+                      ))}
+                      <path d={historyAreaPath} transform="translate(72 40) scale(6.48 2.08)" fill="rgba(37, 99, 235, 0.12)" />
+                      <path d={historyPath} transform="translate(72 40) scale(6.48 2.08)" fill="none" stroke="#2563eb" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+                      {historySeries.map((point, index) => {
+                        if (index === 0 || index === historySeries.length - 1 || index === Math.floor(historySeries.length / 2)) {
+                          const x = 72 + (index / Math.max(historySeries.length - 1, 1)) * 648;
+                          return (
+                            <g key={point.timestamp}>
+                              <line x1={x} y1="40" x2={x} y2="248" stroke="rgba(95, 111, 138, 0.18)" />
+                              <text x={x} y="280" textAnchor="middle" fill="#5f6f8a" fontSize="12">
+                                {point.label}
+                              </text>
+                            </g>
+                          );
+                        }
+                        return null;
+                      })}
+                      {historySeries.map((point, index) => {
+                        if (index === historySeries.length - 1) {
+                          const x = 72 + (index / Math.max(historySeries.length - 1, 1)) * 648;
+                          const y = 40 + (100 - ((point.edge - historyMin) / historySpread) * 100) * 2.08;
+                          return (
+                            <g key={`${point.timestamp}-latest`}>
+                              <circle cx={x} cy={y} r="5" fill="#2563eb" />
+                              <text x={x - 8} y={y - 12} textAnchor="end" fill="#172033" fontSize="12" fontWeight="700">
+                                {point.edge.toFixed(2)}%
+                              </text>
+                            </g>
+                          );
+                        }
+                        return null;
+                      })}
+                    </svg>
+                  </div>
+                  <p style={{ marginBottom: 0, color: '#5f6f8a' }}>
+                    Historical values are inferred from AERO and VELO market prices over the selected period using the current merger conversion ratios.
+                  </p>
+                </>
+              )}
             </div>
           </div>
         </div>
