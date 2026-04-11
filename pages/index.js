@@ -2,10 +2,14 @@
 import { useEffect, useState } from 'react';
 import { ethers } from 'ethers';
 
+const HISTORY_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
 const HISTORY_RANGES = [
   { key: '1', label: '24H' },
   { key: '7', label: '7D' },
   { key: '30', label: '30D' },
+  { key: '60', label: '60D' },
+  { key: '365', label: '1Y' },
 ];
 
 export async function getServerSideProps() {
@@ -174,18 +178,25 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
   useEffect(() => {
     let cancelled = false;
 
-    async function fetchHistoricalArbitrage() {
-      setHistoryStatus('loading');
+    async function fetchHistoricalArbitrage({ silent = false } = {}) {
+      if (!silent) {
+        setHistoryStatus('loading');
+      }
       setHistoryError('');
 
       try {
+        const historyParams = new URLSearchParams({
+          vs_currency: 'usd',
+          days: historyRange,
+        });
+
         const [aeroHistoryRes, veloHistoryRes] = await Promise.all([
-          fetch(`https://api.coingecko.com/api/v3/coins/aerodrome-finance/market_chart?vs_currency=usd&days=${historyRange}&interval=${historyRange === '1' ? 'hourly' : 'daily'}`),
-          fetch(`https://api.coingecko.com/api/v3/coins/velodrome-finance/market_chart?vs_currency=usd&days=${historyRange}&interval=${historyRange === '1' ? 'hourly' : 'daily'}`),
+          fetch(`https://api.coingecko.com/api/v3/coins/aerodrome-finance/market_chart?${historyParams.toString()}`),
+          fetch(`https://api.coingecko.com/api/v3/coins/velodrome-finance/market_chart?${historyParams.toString()}`),
         ]);
 
         if (!aeroHistoryRes.ok || !veloHistoryRes.ok) {
-          throw new Error('Unable to load historical market data.');
+          throw new Error(`Unable to load historical market data. AERO ${aeroHistoryRes.status}, VELO ${veloHistoryRes.status}`);
         }
 
         const [aeroHistoryData, veloHistoryData] = await Promise.all([
@@ -193,7 +204,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
           veloHistoryRes.json(),
         ]);
 
-        const bucketSize = historyRange === '1' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+        const bucketSize = Number(historyRange) <= 90 ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
         const normalizePrices = (prices) => prices.reduce((acc, [timestamp, price]) => {
           const bucket = Math.round(timestamp / bucketSize) * bucketSize;
           acc.set(bucket, price);
@@ -226,7 +237,9 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
         }
       } catch (error) {
         if (!cancelled) {
-          setHistorySeries([]);
+          if (!silent) {
+            setHistorySeries([]);
+          }
           setHistoryStatus('error');
           setHistoryError(error.message || 'Unable to load historical market data.');
         }
@@ -237,8 +250,15 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
       fetchHistoricalArbitrage();
     }
 
+    const refreshTimer = setInterval(() => {
+      if (!cancelled && aeroPerNew > 0 && veloPerNew > 0) {
+        fetchHistoricalArbitrage({ silent: true });
+      }
+    }, HISTORY_REFRESH_INTERVAL_MS);
+
     return () => {
       cancelled = true;
+      clearInterval(refreshTimer);
     };
   }, [historyRange, aeroPerNew, veloPerNew]);
 
@@ -296,7 +316,12 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
             padding: '20px',
             boxShadow: '0 18px 45px rgba(23, 32, 51, 0.08)',
           }}>
-            <h2>Real-Time Data</h2>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap' }}>
+              <h2 style={{ margin: 0 }}>Real-Time Data</h2>
+              <span style={{ color: '#5f6f8a', fontSize: '14px' }}>
+                Source: Coinbase WebSocket prices; on-chain total supply from Base and Optimism RPC.
+              </span>
+            </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', background: '#fff' }}>
                 <thead>
