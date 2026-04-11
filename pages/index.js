@@ -41,14 +41,44 @@ function formatHistoryError(error) {
   const message = String(error?.message || error || '');
 
   if (message.includes('429')) {
-    return 'CoinGecko rate limit reached. Please wait a moment and try again.';
+    return 'Coinbase historical data rate limit reached. Please wait a moment and try again.';
   }
 
   if (message.toLowerCase().includes('failed to fetch')) {
-    return 'Historical data request failed. This is usually a temporary network or CoinGecko availability issue.';
+    return 'Historical data request failed. This is usually a temporary network or Coinbase availability issue.';
   }
 
   return message || 'Unable to load historical market data.';
+}
+
+function getCoinbaseGranularity(days) {
+  if (days <= 1) {
+    return 3600;
+  }
+  if (days <= 7) {
+    return 21600;
+  }
+  return 86400;
+}
+
+function buildCoinbaseCandlesUrl(productId, days) {
+  const granularity = getCoinbaseGranularity(Number(days));
+  const end = Math.floor(Date.now() / 1000);
+  const start = end - Number(days) * 24 * 60 * 60;
+  const params = new URLSearchParams({
+    granularity: String(granularity),
+    start: String(start),
+    end: String(end),
+  });
+
+  return `https://api.exchange.coinbase.com/products/${productId}/candles?${params.toString()}`;
+}
+
+function candlesToPrices(candles) {
+  return (Array.isArray(candles) ? candles : [])
+    .map((candle) => [Number(candle[0]) * 1000, Number(candle[4])])
+    .filter(([timestamp, price]) => Number.isFinite(timestamp) && Number.isFinite(price) && price > 0)
+    .sort((a, b) => a[0] - b[0]);
 }
 
 export async function getServerSideProps() {
@@ -224,13 +254,8 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
       setHistoryError('');
 
       try {
-        const historyParams = new URLSearchParams({
-          vs_currency: 'usd',
-          days: historyRange,
-        });
-
-        const aeroHistoryUrl = `https://api.coingecko.com/api/v3/coins/aerodrome-finance/market_chart?${historyParams.toString()}`;
-        const veloHistoryUrl = `https://api.coingecko.com/api/v3/coins/velodrome-finance/market_chart?${historyParams.toString()}`;
+        const aeroHistoryUrl = buildCoinbaseCandlesUrl('AERO-USD', historyRange);
+        const veloHistoryUrl = buildCoinbaseCandlesUrl('VELO-USD', historyRange);
         const [aeroHistoryRes, veloHistoryRes] = await Promise.all([
           fetchWithRetry(aeroHistoryUrl),
           fetchWithRetry(veloHistoryUrl),
@@ -240,20 +265,20 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
           throw new Error(`Unable to load historical market data. AERO ${aeroHistoryRes.status}, VELO ${veloHistoryRes.status}`);
         }
 
-        const [aeroHistoryData, veloHistoryData] = await Promise.all([
+        const [aeroCandles, veloCandles] = await Promise.all([
           aeroHistoryRes.json(),
           veloHistoryRes.json(),
         ]);
 
-        const bucketSize = Number(historyRange) <= 90 ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+        const bucketSize = getCoinbaseGranularity(Number(historyRange)) * 1000;
         const normalizePrices = (prices) => prices.reduce((acc, [timestamp, price]) => {
           const bucket = Math.round(timestamp / bucketSize) * bucketSize;
           acc.set(bucket, price);
           return acc;
         }, new Map());
 
-        const aeroMap = normalizePrices(aeroHistoryData.prices || []);
-        const veloMap = normalizePrices(veloHistoryData.prices || []);
+        const aeroMap = normalizePrices(candlesToPrices(aeroCandles));
+        const veloMap = normalizePrices(candlesToPrices(veloCandles));
         const alignedTimestamps = [...aeroMap.keys()].filter((timestamp) => veloMap.has(timestamp)).sort((a, b) => a - b);
 
         const nextSeries = alignedTimestamps.map((timestamp) => {
