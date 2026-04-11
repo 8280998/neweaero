@@ -3,14 +3,53 @@ import { useEffect, useState } from 'react';
 import { ethers } from 'ethers';
 
 const HISTORY_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const HISTORY_RETRY_DELAY_MS = 2500;
 
 const HISTORY_RANGES = [
   { key: '1', label: '24H' },
   { key: '7', label: '7D' },
   { key: '30', label: '30D' },
   { key: '60', label: '60D' },
-  { key: '365', label: '1Y' },
 ];
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchWithRetry(url, retries = 1) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const response = await fetch(url);
+      if (response.status === 429 && attempt < retries) {
+        await sleep(HISTORY_RETRY_DELAY_MS * (attempt + 1));
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        await sleep(HISTORY_RETRY_DELAY_MS * (attempt + 1));
+        continue;
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+function formatHistoryError(error) {
+  const message = String(error?.message || error || '');
+
+  if (message.includes('429')) {
+    return 'CoinGecko rate limit reached. Please wait a moment and try again.';
+  }
+
+  if (message.toLowerCase().includes('failed to fetch')) {
+    return 'Historical data request failed. This is usually a temporary network or CoinGecko availability issue.';
+  }
+
+  return message || 'Unable to load historical market data.';
+}
 
 export async function getServerSideProps() {
   try {
@@ -190,9 +229,11 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
           days: historyRange,
         });
 
+        const aeroHistoryUrl = `https://api.coingecko.com/api/v3/coins/aerodrome-finance/market_chart?${historyParams.toString()}`;
+        const veloHistoryUrl = `https://api.coingecko.com/api/v3/coins/velodrome-finance/market_chart?${historyParams.toString()}`;
         const [aeroHistoryRes, veloHistoryRes] = await Promise.all([
-          fetch(`https://api.coingecko.com/api/v3/coins/aerodrome-finance/market_chart?${historyParams.toString()}`),
-          fetch(`https://api.coingecko.com/api/v3/coins/velodrome-finance/market_chart?${historyParams.toString()}`),
+          fetchWithRetry(aeroHistoryUrl),
+          fetchWithRetry(veloHistoryUrl),
         ]);
 
         if (!aeroHistoryRes.ok || !veloHistoryRes.ok) {
@@ -241,7 +282,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
             setHistorySeries([]);
           }
           setHistoryStatus('error');
-          setHistoryError(error.message || 'Unable to load historical market data.');
+          setHistoryError(formatHistoryError(error));
         }
       }
     }
@@ -316,10 +357,22 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
             padding: '20px',
             boxShadow: '0 18px 45px rgba(23, 32, 51, 0.08)',
           }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
               <h2 style={{ margin: 0 }}>Real-Time Data</h2>
-              <span style={{ color: '#5f6f8a', fontSize: '14px' }}>
-                Source: Coinbase WebSocket prices; on-chain total supply from Base and Optimism RPC.
+              <span
+                translate="no"
+                style={{
+                  color: '#4f5f78',
+                  fontSize: '12px',
+                  lineHeight: 1.4,
+                  background: '#f4f7fb',
+                  border: '1px solid #d8dfeb',
+                  borderRadius: '999px',
+                  padding: '4px 10px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Source: Coinbase WebSocket prices / Base and Optimism on-chain supply
               </span>
             </div>
             <div style={{ overflowX: 'auto' }}>
@@ -484,8 +537,8 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                           </text>
                         </g>
                       ))}
-                      <path d={historyAreaPath} transform="translate(72 40) scale(6.48 2.08)" fill="rgba(37, 99, 235, 0.12)" />
-                      <path d={historyPath} transform="translate(72 40) scale(6.48 2.08)" fill="none" stroke="#2563eb" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+                      <path d={historyAreaPath} transform="translate(72 40) scale(6.48 2.08)" fill="rgba(37, 99, 235, 0.06)" />
+                      <path d={historyPath} transform="translate(72 40) scale(6.48 2.08)" fill="none" stroke="#2563eb" strokeWidth="0.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
                       {historySeries.map((point, index) => {
                         if (index === 0 || index === historySeries.length - 1 || index === Math.floor(historySeries.length / 2)) {
                           const x = 72 + (index / Math.max(historySeries.length - 1, 1)) * 648;
@@ -506,7 +559,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                           const y = 40 + (100 - ((point.edge - historyMin) / historySpread) * 100) * 2.08;
                           return (
                             <g key={`${point.timestamp}-latest`}>
-                              <circle cx={x} cy={y} r="5" fill="#2563eb" />
+                              <circle cx={x} cy={y} r="3" fill="#2563eb" />
                               <text x={x - 8} y={y - 12} textAnchor="end" fill="#172033" fontSize="12" fontWeight="700">
                                 {point.edge.toFixed(2)}%
                               </text>
