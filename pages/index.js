@@ -596,7 +596,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                     </svg>
                   </div>
                   <p style={{ marginBottom: 0, color: '#5f6f8a' }}>
-                    Historical values are inferred from AERO and VELO market prices over the selected period using the current merger conversion ratios.
+                    Source  https://aero.xyz/articles/aero-economic-case
                   </p>
                 </>
               )}
