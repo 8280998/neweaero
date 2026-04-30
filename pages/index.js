@@ -530,7 +530,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px', marginBottom: '18px' }}>
               <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
                 <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Latest</div>
-                <div style={{ fontSize: '28px', fontWeight: 700 }}>{historyLatest.toFixed(2)}%</div>
+                <div style={{ fontSize: '28px', fontWeight: 700 }}>{arbitrageEdge.toFixed(2)}%</div>
               </div>
               <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
                 <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Peak</div>
