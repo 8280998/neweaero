@@ -183,6 +183,8 @@ function buildYieldAnalytics(rows, priceMap, fallbackPrice = 0, warning = '') {
       simpleIncomePerAero: 0,
       compoundIncomePerAero: 0,
       latestIncomePerAero: 0,
+      startDate: '',
+      endDate: '',
       warning,
     };
   }
@@ -259,6 +261,8 @@ function buildYieldAnalytics(rows, priceMap, fallbackPrice = 0, warning = '') {
     simpleIncomePerAero: initialAero > 0 ? totalProfit / initialAero : 0,
     compoundIncomePerAero: initialAero > 0 ? compoundProfit / initialAero : 0,
     latestIncomePerAero: initialAero > 0 ? rowsWithCumulative[rowsWithCumulative.length - 1].profitPerAero : 0,
+    startDate: rowsWithCumulative[0].date,
+    endDate: rowsWithCumulative[rowsWithCumulative.length - 1].date,
     warning,
   };
 }
@@ -859,22 +863,22 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
               <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
                 <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Annualized Yield</div>
                 <div style={{ fontSize: '28px', fontWeight: 700 }}>{(yieldAnalytics?.simpleAnnualYield || 0).toFixed(2)}%</div>
-                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Simple annualized return from the weekly USD income.</div>
+                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Annualized from the CSV period; the chart below shows cumulative return.</div>
               </div>
               <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
                 <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Estimated Compound APY</div>
                 <div style={{ fontSize: '28px', fontWeight: 700 }}>{(yieldAnalytics?.compoundAnnualYield || 0).toFixed(2)}%</div>
-                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Assumes each week&apos;s USD income buys AERO at that date&apos;s price.</div>
+                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Annualized compound rate; weekly income is reinvested at each date&apos;s AERO price.</div>
               </div>
               <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
                 <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>1 AERO Income</div>
                 <div style={{ fontSize: '28px', fontWeight: 700 }}>{formatCurrency(yieldAnalytics?.simpleIncomePerAero || 0, 6)}</div>
-                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Non-compounded income per initial AERO.</div>
+                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Non-compounded income per initial AERO since {yieldAnalytics?.startDate || '2025-01-02'}.</div>
               </div>
               <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
                 <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>1 AERO Compound</div>
                 <div style={{ fontSize: '28px', fontWeight: 700 }}>{formatCurrency(yieldAnalytics?.compoundIncomePerAero || 0, 6)}</div>
-                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Estimated compounded income per initial AERO.</div>
+                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Estimated compounded income per initial AERO since {yieldAnalytics?.startDate || '2025-01-02'}.</div>
               </div>
             </div>
 
@@ -882,8 +886,8 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
               {yieldRows.length > 1 ? (
                 <>
                   <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '12px', color: '#5f6f8a', fontSize: '13px' }}>
-                    <span><strong style={{ color: '#2563eb' }}>Blue</strong> simple cumulative yield</span>
-                    <span><strong style={{ color: '#16a34a' }}>Green</strong> compounded cumulative yield</span>
+                    <span><strong style={{ color: '#2563eb' }}>Blue</strong> cumulative return over CSV period</span>
+                    <span><strong style={{ color: '#16a34a' }}>Green</strong> cumulative compounded return over CSV period</span>
                     {latestYieldRow && <span>Final AERO per 1 initial AERO: {Number(yieldAnalytics.finalAeroPerInitialAero || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>}
                   </div>
                   <div style={{ width: '100%', overflowX: 'auto' }}>
@@ -945,8 +949,8 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                           <g transform={`translate(${Math.min(Math.max(hoveredYieldX - 72, 96), 520)} ${Math.max(hoveredYieldY - 82, 48)})`}>
                             <rect width="178" height="68" rx="10" fill="#172033" opacity="0.94" />
                             <text x="12" y="20" fill="#fff" fontSize="12" fontWeight="700">{hoveredYieldPoint.date}</text>
-                            <text x="12" y="40" fill="#c7d2fe" fontSize="12">Yield: {hoveredYieldPoint.cumulativeReturnRate.toFixed(2)}%</text>
-                            <text x="12" y="58" fill="#bbf7d0" fontSize="12">Compound: {hoveredYieldPoint.cumulativeCompoundReturnRate.toFixed(2)}%</text>
+                            <text x="12" y="40" fill="#c7d2fe" fontSize="12">Cumulative: {hoveredYieldPoint.cumulativeReturnRate.toFixed(2)}%</text>
+                            <text x="12" y="58" fill="#bbf7d0" fontSize="12">Compounded: {hoveredYieldPoint.cumulativeCompoundReturnRate.toFixed(2)}%</text>
                           </g>
                         </g>
                       )}
