@@ -102,6 +102,30 @@ function toDateKey(timestampMs) {
   return new Date(timestampMs).toISOString().slice(0, 10);
 }
 
+async function readYieldCsvText(fs, path) {
+  const candidates = [
+    path.join(process.cwd(), 'pages', 'data.csv'),
+    path.join(process.cwd(), 'data.csv'),
+    path.join(process.cwd(), 'public', 'data.csv'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      return await fs.readFile(candidate, 'utf8');
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  const response = await fetch('https://raw.githubusercontent.com/8280998/neweaero/main/pages/data.csv');
+  if (!response.ok) {
+    throw new Error(`Unable to load data.csv: ${response.status}`);
+  }
+  return response.text();
+}
+
 async function fetchAeroDailyPrices(startDate, endDate) {
   const prices = new Map();
   const chunkMs = 250 * 24 * 60 * 60 * 1000;
@@ -129,7 +153,7 @@ async function fetchAeroDailyPrices(startDate, endDate) {
   return prices;
 }
 
-function getNearestPrice(priceMap, date) {
+function getNearestPrice(priceMap, date, fallbackPrice = 0) {
   const target = new Date(`${date}T00:00:00.000Z`).getTime();
   for (let offset = 0; offset <= 3; offset += 1) {
     const forward = toDateKey(target + offset * 24 * 60 * 60 * 1000);
@@ -141,10 +165,10 @@ function getNearestPrice(priceMap, date) {
       return priceMap.get(backward);
     }
   }
-  return 0;
+  return fallbackPrice;
 }
 
-function buildYieldAnalytics(rows, priceMap) {
+function buildYieldAnalytics(rows, priceMap, fallbackPrice = 0, warning = '') {
   if (!rows.length) {
     return {
       rows: [],
@@ -155,11 +179,12 @@ function buildYieldAnalytics(rows, priceMap) {
       weeks: 0,
       initialCapital: 0,
       finalAero: 0,
+      warning,
     };
   }
 
   const enriched = rows.map((row) => {
-    const price = getNearestPrice(priceMap, row.date);
+    const price = getNearestPrice(priceMap, row.date, fallbackPrice);
     const capital = row.aero * price;
     const weeklyYield = capital > 0 ? row.sum / capital : 0;
     return {
@@ -218,6 +243,7 @@ function buildYieldAnalytics(rows, priceMap) {
     weeks: rowsWithCumulative.length,
     initialCapital,
     finalAero: compoundAero,
+    warning,
   };
 }
 
@@ -250,15 +276,22 @@ export async function getServerSideProps() {
     const veloPrice = parseFloat(veloPriceData.data?.amount || 0);
     let yieldAnalytics = buildYieldAnalytics([], new Map());
     try {
-      const csvPath = path.join(process.cwd(), 'pages', 'data.csv');
-      const csvText = await fs.readFile(csvPath, 'utf8');
+      const csvText = await readYieldCsvText(fs, path);
       const yieldRows = parseYieldCsv(csvText);
-      const priceMap = yieldRows.length
-        ? await fetchAeroDailyPrices(yieldRows[0].date, yieldRows[yieldRows.length - 1].date)
-        : new Map();
-      yieldAnalytics = buildYieldAnalytics(yieldRows, priceMap);
+      let priceMap = new Map();
+      let yieldWarning = '';
+      try {
+        priceMap = yieldRows.length
+          ? await fetchAeroDailyPrices(yieldRows[0].date, yieldRows[yieldRows.length - 1].date)
+          : new Map();
+      } catch (priceError) {
+        console.error('Error loading AERO historical prices:', priceError);
+        yieldWarning = 'AERO historical prices were unavailable, so current AERO price was used as a temporary estimate.';
+      }
+      yieldAnalytics = buildYieldAnalytics(yieldRows, priceMap, aeroPrice, yieldWarning);
     } catch (yieldError) {
       console.error('Error loading yield data:', yieldError);
+      yieldAnalytics = buildYieldAnalytics([], new Map(), aeroPrice, yieldError.message || 'Unable to load data.csv');
     }
 
     return {
@@ -792,6 +825,11 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                 {yieldAnalytics?.weeks || 0} weekly records
               </div>
             </div>
+            {yieldAnalytics?.warning && (
+              <p style={{ margin: '0 0 14px', color: '#b45309', fontSize: '14px' }}>
+                {yieldAnalytics.warning}
+              </p>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px', marginBottom: '18px' }}>
               <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
@@ -860,7 +898,9 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                   </div>
                 </>
               ) : (
-                <p style={{ margin: 0, color: '#5f6f8a' }}>No yield data loaded from data.csv.</p>
+                <p style={{ margin: 0, color: '#5f6f8a' }}>
+                  {yieldAnalytics?.warning || 'No yield data loaded from data.csv.'}
+                </p>
               )}
             </div>
           </div>
