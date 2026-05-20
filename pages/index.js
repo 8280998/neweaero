@@ -81,8 +81,150 @@ function candlesToPrices(candles) {
     .sort((a, b) => a[0] - b[0]);
 }
 
+function parseYieldCsv(csvText) {
+  return csvText
+    .trim()
+    .split(/\r?\n/)
+    .slice(1)
+    .map((line) => {
+      const [date, aero, sum] = line.split(',').map((value) => value.trim());
+      return {
+        date,
+        aero: Number(aero),
+        sum: Number(sum),
+      };
+    })
+    .filter((row) => row.date && Number.isFinite(row.aero) && Number.isFinite(row.sum))
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+}
+
+function toDateKey(timestampMs) {
+  return new Date(timestampMs).toISOString().slice(0, 10);
+}
+
+async function fetchAeroDailyPrices(startDate, endDate) {
+  const prices = new Map();
+  const chunkMs = 250 * 24 * 60 * 60 * 1000;
+  let cursor = new Date(`${startDate}T00:00:00.000Z`).getTime();
+  const end = new Date(`${endDate}T23:59:59.000Z`).getTime();
+
+  while (cursor <= end) {
+    const chunkEnd = Math.min(cursor + chunkMs, end);
+    const params = new URLSearchParams({
+      granularity: '86400',
+      start: new Date(cursor).toISOString(),
+      end: new Date(chunkEnd).toISOString(),
+    });
+    const response = await fetch(`https://api.exchange.coinbase.com/products/AERO-USD/candles?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error(`Unable to load AERO historical prices: ${response.status}`);
+    }
+    const candles = await response.json();
+    candlesToPrices(candles).forEach(([timestamp, price]) => {
+      prices.set(toDateKey(timestamp), price);
+    });
+    cursor = chunkEnd + 24 * 60 * 60 * 1000;
+  }
+
+  return prices;
+}
+
+function getNearestPrice(priceMap, date) {
+  const target = new Date(`${date}T00:00:00.000Z`).getTime();
+  for (let offset = 0; offset <= 3; offset += 1) {
+    const forward = toDateKey(target + offset * 24 * 60 * 60 * 1000);
+    const backward = toDateKey(target - offset * 24 * 60 * 60 * 1000);
+    if (priceMap.has(forward)) {
+      return priceMap.get(forward);
+    }
+    if (priceMap.has(backward)) {
+      return priceMap.get(backward);
+    }
+  }
+  return 0;
+}
+
+function buildYieldAnalytics(rows, priceMap) {
+  if (!rows.length) {
+    return {
+      rows: [],
+      totalProfit: 0,
+      compoundProfit: 0,
+      simpleAnnualYield: 0,
+      compoundAnnualYield: 0,
+      weeks: 0,
+      initialCapital: 0,
+      finalAero: 0,
+    };
+  }
+
+  const enriched = rows.map((row) => {
+    const price = getNearestPrice(priceMap, row.date);
+    const capital = row.aero * price;
+    const weeklyYield = capital > 0 ? row.sum / capital : 0;
+    return {
+      ...row,
+      price,
+      capital,
+      weeklyYield,
+    };
+  });
+
+  let compoundAero = enriched[0].aero;
+  let compoundProfit = 0;
+  const series = enriched.map((row) => {
+    const profitPerAero = row.aero > 0 ? row.sum / row.aero : 0;
+    const compoundedWeekProfit = compoundAero * profitPerAero;
+    const reinvestedAero = row.price > 0 ? compoundedWeekProfit / row.price : 0;
+    compoundAero += reinvestedAero;
+    compoundProfit += compoundedWeekProfit;
+
+    return {
+      ...row,
+      compoundedWeekProfit,
+      reinvestedAero,
+      compoundAero,
+      cumulativeProfit: 0,
+      cumulativeCompoundProfit: compoundProfit,
+    };
+  });
+
+  let runningProfit = 0;
+  const rowsWithCumulative = series.map((row) => {
+    runningProfit += row.sum;
+    return {
+      ...row,
+      cumulativeProfit: runningProfit,
+    };
+  });
+
+  const firstDate = new Date(`${rowsWithCumulative[0].date}T00:00:00.000Z`);
+  const lastDate = new Date(`${rowsWithCumulative[rowsWithCumulative.length - 1].date}T00:00:00.000Z`);
+  const days = Math.max((lastDate - firstDate) / (24 * 60 * 60 * 1000), 1);
+  const years = days / 365;
+  const initialCapital = rowsWithCumulative[0].capital;
+  const totalProfit = runningProfit;
+  const simpleAnnualYield = initialCapital > 0 ? (totalProfit / initialCapital / years) * 100 : 0;
+  const compoundAnnualYield = initialCapital > 0 && years > 0
+    ? ((1 + compoundProfit / initialCapital) ** (1 / years) - 1) * 100
+    : 0;
+
+  return {
+    rows: rowsWithCumulative,
+    totalProfit,
+    compoundProfit,
+    simpleAnnualYield,
+    compoundAnnualYield,
+    weeks: rowsWithCumulative.length,
+    initialCapital,
+    finalAero: compoundAero,
+  };
+}
+
 export async function getServerSideProps() {
   try {
+    const fs = await import('fs/promises');
+    const path = await import('path');
     // Fetch supplies on-chain
     const baseProvider = new ethers.JsonRpcProvider('https://mainnet.base.org');
     const optimismProvider = new ethers.JsonRpcProvider('https://mainnet.optimism.io');
@@ -106,6 +248,18 @@ export async function getServerSideProps() {
     const veloPriceRes = await fetch('https://api.coinbase.com/v2/prices/VELO-USD/spot');
     const veloPriceData = await veloPriceRes.json();
     const veloPrice = parseFloat(veloPriceData.data?.amount || 0);
+    let yieldAnalytics = buildYieldAnalytics([], new Map());
+    try {
+      const csvPath = path.join(process.cwd(), 'pages', 'data.csv');
+      const csvText = await fs.readFile(csvPath, 'utf8');
+      const yieldRows = parseYieldCsv(csvText);
+      const priceMap = yieldRows.length
+        ? await fetchAeroDailyPrices(yieldRows[0].date, yieldRows[yieldRows.length - 1].date)
+        : new Map();
+      yieldAnalytics = buildYieldAnalytics(yieldRows, priceMap);
+    } catch (yieldError) {
+      console.error('Error loading yield data:', yieldError);
+    }
 
     return {
       props: {
@@ -113,6 +267,7 @@ export async function getServerSideProps() {
         initialVeloPrice: veloPrice,
         aeroSupply,
         veloSupply,
+        yieldAnalytics,
       },
     };
   } catch (error) {
@@ -123,12 +278,13 @@ export async function getServerSideProps() {
         initialVeloPrice: 0,
         aeroSupply: 0,
         veloSupply: 0,
+        yieldAnalytics: buildYieldAnalytics([], new Map()),
       },
     };
   }
 }
 
-export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, veloSupply }) {
+export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, veloSupply, yieldAnalytics }) {
   const [aeroPrice, setAeroPrice] = useState(initialAeroPrice);
   const [veloPrice, setVeloPrice] = useState(initialVeloPrice);
   const [aeroAmount, setAeroAmount] = useState(10000);
@@ -201,6 +357,21 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
     ? `${historyPath} L 100 100 L 0 100 Z`
     : '';
   const historyTickValues = [historyMax, historyMin + historySpread / 2, historyMin];
+  const yieldRows = yieldAnalytics?.rows || [];
+  const yieldChartMax = yieldRows.length > 0
+    ? Math.max(...yieldRows.map((point) => Math.max(point.cumulativeProfit, point.cumulativeCompoundProfit)), 1)
+    : 1;
+  const yieldChartMin = 0;
+  const yieldChartSpread = Math.max(yieldChartMax - yieldChartMin, 1);
+  const buildYieldPath = (key) => yieldRows.map((point, index) => {
+    const x = (index / Math.max(yieldRows.length - 1, 1)) * 100;
+    const y = 100 - ((point[key] - yieldChartMin) / yieldChartSpread) * 100;
+    return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
+  }).join(' ');
+  const simpleYieldPath = buildYieldPath('cumulativeProfit');
+  const compoundYieldPath = buildYieldPath('cumulativeCompoundProfit');
+  const latestYieldRow = yieldRows.length > 0 ? yieldRows[yieldRows.length - 1] : null;
+  const yieldTickValues = [yieldChartMax, yieldChartMax / 2, 0];
 
   const formatHistoryLabel = (timestamp) => {
     const days = Number(historyRange);
@@ -599,6 +770,97 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                     Source  https://aero.xyz/articles/aero-economic-case
                   </p>
                 </>
+              )}
+            </div>
+          </div>
+
+          <div style={{
+            background: '#fff',
+            border: '1px solid #d8dfeb',
+            borderRadius: '18px',
+            padding: '20px',
+            boxShadow: '0 18px 45px rgba(23, 32, 51, 0.08)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
+              <div>
+                <h2 style={{ margin: 0 }}>AERO Weekly Yield</h2>
+                <p style={{ margin: '8px 0 0', color: '#5f6f8a' }}>
+                  Based on pages/data.csv weekly AERO count and USD income, with same-day Coinbase AERO prices for reinvestment estimates.
+                </p>
+              </div>
+              <div style={{ color: '#5f6f8a', fontSize: '13px' }}>
+                {yieldAnalytics?.weeks || 0} weekly records
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px', marginBottom: '18px' }}>
+              <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
+                <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Annualized Yield</div>
+                <div style={{ fontSize: '28px', fontWeight: 700 }}>{(yieldAnalytics?.simpleAnnualYield || 0).toFixed(2)}%</div>
+                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Simple annualized return from the weekly USD income.</div>
+              </div>
+              <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
+                <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Estimated Compound APY</div>
+                <div style={{ fontSize: '28px', fontWeight: 700 }}>{(yieldAnalytics?.compoundAnnualYield || 0).toFixed(2)}%</div>
+                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Assumes each week&apos;s USD income buys AERO at that date&apos;s price.</div>
+              </div>
+              <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
+                <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Total Income</div>
+                <div style={{ fontSize: '28px', fontWeight: 700 }}>{formatCurrency(yieldAnalytics?.totalProfit || 0, 2)}</div>
+                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Non-compounded total from the CSV period.</div>
+              </div>
+              <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
+                <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Compound Income</div>
+                <div style={{ fontSize: '28px', fontWeight: 700 }}>{formatCurrency(yieldAnalytics?.compoundProfit || 0, 2)}</div>
+                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Estimated income after weekly reinvestment.</div>
+              </div>
+            </div>
+
+            <div style={{ border: '1px solid #d8dfeb', borderRadius: '16px', padding: '18px', background: 'linear-gradient(180deg, #fbfcff 0%, #f3f7ff 100%)' }}>
+              {yieldRows.length > 1 ? (
+                <>
+                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '12px', color: '#5f6f8a', fontSize: '13px' }}>
+                    <span><strong style={{ color: '#2563eb' }}>Blue</strong> simple cumulative income</span>
+                    <span><strong style={{ color: '#16a34a' }}>Green</strong> compounded cumulative income</span>
+                    {latestYieldRow && <span>Final AERO estimate: {Number(yieldAnalytics.finalAero || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>}
+                  </div>
+                  <div style={{ width: '100%', overflowX: 'auto' }}>
+                    <svg viewBox="0 0 760 320" style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="AERO weekly yield chart">
+                      <rect x="0" y="0" width="760" height="320" rx="24" fill="#fbfcff" />
+                      {[52, 140, 228].map((y, index) => (
+                        <g key={y}>
+                          <line x1="84" y1={y} x2="720" y2={y} stroke="#d8dfeb" strokeDasharray="4 6" />
+                          <text x="72" y={y + 4} textAnchor="end" fill="#5f6f8a" fontSize="12">
+                            {formatCurrency(yieldTickValues[index], 0)}
+                          </text>
+                        </g>
+                      ))}
+                      <path d={simpleYieldPath} transform="translate(84 40) scale(6.36 2.08)" fill="none" stroke="#2563eb" strokeWidth="1" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                      <path d={compoundYieldPath} transform="translate(84 40) scale(6.36 2.08)" fill="none" stroke="#16a34a" strokeWidth="1" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                      {yieldRows.map((point, index) => {
+                        if (index === 0 || index === yieldRows.length - 1 || index === Math.floor(yieldRows.length / 2)) {
+                          const x = 84 + (index / Math.max(yieldRows.length - 1, 1)) * 636;
+                          return (
+                            <g key={point.date}>
+                              <line x1={x} y1="40" x2={x} y2="248" stroke="rgba(95, 111, 138, 0.16)" />
+                              <text x={x} y="280" textAnchor="middle" fill="#5f6f8a" fontSize="12">
+                                {point.date.slice(5)}
+                              </text>
+                            </g>
+                          );
+                        }
+                        return null;
+                      })}
+                      {latestYieldRow && (
+                        <text x="718" y="36" textAnchor="end" fill="#172033" fontSize="12" fontWeight="700">
+                          {formatCurrency(latestYieldRow.cumulativeCompoundProfit, 2)}
+                        </text>
+                      )}
+                    </svg>
+                  </div>
+                </>
+              ) : (
+                <p style={{ margin: 0, color: '#5f6f8a' }}>No yield data loaded from data.csv.</p>
               )}
             </div>
           </div>
