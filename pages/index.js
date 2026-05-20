@@ -492,6 +492,13 @@ function YieldPanel({ analytics, formatCurrency }) {
           <div style={{ fontSize: '28px', fontWeight: 700 }}>{formatCurrency(analytics?.compoundIncomePerToken || 0, 6)}</div>
           <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Estimated compounded income per initial {tokenLabel} since {analytics?.startDate || '2025-01-02'}.</div>
         </div>
+        <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
+          <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Final {tokenLabel}</div>
+          <div style={{ fontSize: '28px', fontWeight: 700 }}>
+            {Number(analytics?.finalTokenPerInitialToken || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+          </div>
+          <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Final {tokenLabel} per 1 initial {tokenLabel} after weekly reinvestment.</div>
+        </div>
       </div>
 
       <div style={{ border: '1px solid #d8dfeb', borderRadius: '16px', padding: '18px', background: 'linear-gradient(180deg, #fbfcff 0%, #f3f7ff 100%)' }}>
@@ -502,7 +509,6 @@ function YieldPanel({ analytics, formatCurrency }) {
               <span><strong style={{ color: '#7c3aed' }}>Violet</strong> weekly compound APY</span>
               <span><strong style={{ color: '#2563eb' }}>Blue</strong> cumulative yield</span>
               <span><strong style={{ color: '#16a34a' }}>Green</strong> cumulative compound yield</span>
-              {latestYieldRow && <span>Final {tokenLabel} per 1 initial {tokenLabel}: {Number(analytics.finalTokenPerInitialToken || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>}
             </div>
             <div style={{ width: '100%', overflowX: 'auto' }}>
               <svg
