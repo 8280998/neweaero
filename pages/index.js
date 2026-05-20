@@ -251,11 +251,17 @@ function buildYieldAnalytics(rows, priceMap, fallbackPrice = 0, warning = '', op
   });
 
   let runningProfit = 0;
+  let runningYieldRate = 0;
+  let runningCompoundMultiplier = 1;
   const rowsWithCumulative = series.map((row) => {
     runningProfit += row.income;
+    runningYieldRate += row.weeklyYield;
+    runningCompoundMultiplier *= 1 + row.weeklyYield;
     return {
       ...row,
       cumulativeProfit: runningProfit,
+      cumulativeYieldRate: runningYieldRate,
+      cumulativeCompoundYieldRate: runningCompoundMultiplier - 1,
     };
   });
 
@@ -263,8 +269,8 @@ function buildYieldAnalytics(rows, priceMap, fallbackPrice = 0, warning = '', op
   const totalProfit = runningProfit;
   const initialToken = rowsWithCumulative[0].tokenAmount || 0;
   const rowsWithRates = rowsWithCumulative.map((row) => {
-    const cumulativeReturnRate = initialCapital > 0 ? (row.cumulativeProfit / initialCapital) * 100 : 0;
-    const cumulativeCompoundReturnRate = initialCapital > 0 ? (row.cumulativeCompoundProfit / initialCapital) * 100 : 0;
+    const cumulativeReturnRate = row.cumulativeYieldRate * 100;
+    const cumulativeCompoundReturnRate = row.cumulativeCompoundYieldRate * 100;
     const annualizedReturnRate = row.weeklyYield * 52 * 100;
     const annualizedCompoundReturnRate = ((1 + row.weeklyYield) ** 52 - 1) * 100;
 
