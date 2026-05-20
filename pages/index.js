@@ -259,29 +259,14 @@ function buildYieldAnalytics(rows, priceMap, fallbackPrice = 0, warning = '', op
     };
   });
 
-  const firstDate = new Date(`${rowsWithCumulative[0].date}T00:00:00.000Z`);
-  const lastDate = new Date(`${rowsWithCumulative[rowsWithCumulative.length - 1].date}T00:00:00.000Z`);
-  const days = Math.max((lastDate - firstDate) / (24 * 60 * 60 * 1000), 1);
-  const years = days / 365;
   const initialCapital = rowsWithCumulative[0].capital;
   const totalProfit = runningProfit;
-  const simpleAnnualYield = initialCapital > 0 ? (totalProfit / initialCapital / years) * 100 : 0;
-  const compoundAnnualYield = initialCapital > 0 && years > 0
-    ? ((1 + compoundProfit / initialCapital) ** (1 / years) - 1) * 100
-    : 0;
   const initialToken = rowsWithCumulative[0].tokenAmount || 0;
-  const rowsWithRates = rowsWithCumulative.map((row, index) => {
-    const rowDate = new Date(`${row.date}T00:00:00.000Z`);
-    const elapsedDays = Math.max((rowDate - firstDate) / (24 * 60 * 60 * 1000), index === 0 ? 7 : 1);
-    const elapsedYears = elapsedDays / 365;
+  const rowsWithRates = rowsWithCumulative.map((row) => {
     const cumulativeReturnRate = initialCapital > 0 ? (row.cumulativeProfit / initialCapital) * 100 : 0;
     const cumulativeCompoundReturnRate = initialCapital > 0 ? (row.cumulativeCompoundProfit / initialCapital) * 100 : 0;
-    const annualizedReturnRate = initialCapital > 0 && elapsedYears > 0
-      ? (row.cumulativeProfit / initialCapital / elapsedYears) * 100
-      : 0;
-    const annualizedCompoundReturnRate = initialCapital > 0 && elapsedYears > 0
-      ? ((1 + row.cumulativeCompoundProfit / initialCapital) ** (1 / elapsedYears) - 1) * 100
-      : 0;
+    const annualizedReturnRate = row.weeklyYield * 52 * 100;
+    const annualizedCompoundReturnRate = ((1 + row.weeklyYield) ** 52 - 1) * 100;
 
     return {
       ...row,
@@ -292,13 +277,14 @@ function buildYieldAnalytics(rows, priceMap, fallbackPrice = 0, warning = '', op
       weeklyYieldRate: row.weeklyYield * 100,
     };
   });
+  const latestRates = rowsWithRates[rowsWithRates.length - 1];
 
   return {
     rows: rowsWithRates,
     totalProfit,
     compoundProfit,
-    simpleAnnualYield,
-    compoundAnnualYield,
+    simpleAnnualYield: latestRates?.annualizedReturnRate || 0,
+    compoundAnnualYield: latestRates?.annualizedCompoundReturnRate || 0,
     weeks: rowsWithCumulative.length,
     initialCapital,
     finalToken: compoundToken,
@@ -483,12 +469,12 @@ function YieldPanel({ analytics, formatCurrency }) {
         <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
           <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Annualized Yield</div>
           <div style={{ fontSize: '28px', fontWeight: 700 }}>{(analytics?.simpleAnnualYield || 0).toFixed(2)}%</div>
-          <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Annualized from the CSV period; the chart below shows cumulative return.</div>
+          <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Latest weekly voting income annualized against that week&apos;s {tokenLabel} value.</div>
         </div>
         <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
           <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Estimated Compound APY</div>
           <div style={{ fontSize: '28px', fontWeight: 700 }}>{(analytics?.compoundAnnualYield || 0).toFixed(2)}%</div>
-          <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Annualized compound rate; weekly income is reinvested at each date&apos;s {tokenLabel} price.</div>
+          <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Latest weekly yield compounded for 52 weeks.</div>
         </div>
         <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
           <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>1 {tokenLabel} Income</div>
@@ -506,8 +492,8 @@ function YieldPanel({ analytics, formatCurrency }) {
         {yieldRows.length > 1 ? (
           <>
             <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '12px', color: '#5f6f8a', fontSize: '13px' }}>
-              <span><strong style={{ color: '#f97316' }}>Orange</strong> annualized yield</span>
-              <span><strong style={{ color: '#7c3aed' }}>Violet</strong> annualized compound yield</span>
+              <span><strong style={{ color: '#f97316' }}>Orange</strong> weekly annualized yield</span>
+              <span><strong style={{ color: '#7c3aed' }}>Violet</strong> weekly compound APY</span>
               <span><strong style={{ color: '#2563eb' }}>Blue</strong> cumulative yield</span>
               <span><strong style={{ color: '#16a34a' }}>Green</strong> cumulative compound yield</span>
               {latestYieldRow && <span>Final {tokenLabel} per 1 initial {tokenLabel}: {Number(analytics.finalTokenPerInitialToken || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>}
@@ -563,8 +549,8 @@ function YieldPanel({ analytics, formatCurrency }) {
                     <g transform={`translate(${Math.min(Math.max(hoveredYieldX - 86, 96), 496)} ${Math.max(hoveredYieldY - 112, 48)})`}>
                       <rect width="218" height="104" rx="10" fill="#172033" opacity="0.94" />
                       <text x="12" y="20" fill="#fff" fontSize="12" fontWeight="700">{hoveredYieldPoint.date}</text>
-                      <text x="12" y="40" fill="#fed7aa" fontSize="12">Annualized: {hoveredYieldPoint.annualizedReturnRate.toFixed(2)}%</text>
-                      <text x="12" y="58" fill="#ddd6fe" fontSize="12">Annualized compound: {hoveredYieldPoint.annualizedCompoundReturnRate.toFixed(2)}%</text>
+                      <text x="12" y="40" fill="#fed7aa" fontSize="12">Weekly annualized: {hoveredYieldPoint.annualizedReturnRate.toFixed(2)}%</text>
+                      <text x="12" y="58" fill="#ddd6fe" fontSize="12">Weekly compound APY: {hoveredYieldPoint.annualizedCompoundReturnRate.toFixed(2)}%</text>
                       <text x="12" y="76" fill="#c7d2fe" fontSize="12">Cumulative: {hoveredYieldPoint.cumulativeReturnRate.toFixed(2)}%</text>
                       <text x="12" y="94" fill="#bbf7d0" fontSize="12">Cumulative compound: {hoveredYieldPoint.cumulativeCompoundReturnRate.toFixed(2)}%</text>
                     </g>
