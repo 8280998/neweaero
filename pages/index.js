@@ -179,6 +179,7 @@ function buildYieldAnalytics(rows, priceMap, fallbackPrice = 0, warning = '') {
       weeks: 0,
       initialCapital: 0,
       finalAero: 0,
+      finalAeroPerInitialAero: 0,
       simpleIncomePerAero: 0,
       compoundIncomePerAero: 0,
       latestIncomePerAero: 0,
@@ -254,6 +255,7 @@ function buildYieldAnalytics(rows, priceMap, fallbackPrice = 0, warning = '') {
     weeks: rowsWithCumulative.length,
     initialCapital,
     finalAero: compoundAero,
+    finalAeroPerInitialAero: initialAero > 0 ? compoundAero / initialAero : 0,
     simpleIncomePerAero: initialAero > 0 ? totalProfit / initialAero : 0,
     compoundIncomePerAero: initialAero > 0 ? compoundProfit / initialAero : 0,
     latestIncomePerAero: initialAero > 0 ? rowsWithCumulative[rowsWithCumulative.length - 1].profitPerAero : 0,
@@ -882,7 +884,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                   <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '12px', color: '#5f6f8a', fontSize: '13px' }}>
                     <span><strong style={{ color: '#2563eb' }}>Blue</strong> simple cumulative yield</span>
                     <span><strong style={{ color: '#16a34a' }}>Green</strong> compounded cumulative yield</span>
-                    {latestYieldRow && <span>Final AERO estimate: {Number(yieldAnalytics.finalAero || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>}
+                    {latestYieldRow && <span>Final AERO per 1 initial AERO: {Number(yieldAnalytics.finalAeroPerInitialAero || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>}
                   </div>
                   <div style={{ width: '100%', overflowX: 'auto' }}>
                     <svg
