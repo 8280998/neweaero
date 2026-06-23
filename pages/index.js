@@ -4,12 +4,15 @@ import { ethers } from 'ethers';
 
 const HISTORY_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const HISTORY_RETRY_DELAY_MS = 2500;
+const COINBASE_MAX_CANDLES_PER_REQUEST = 300;
 
 const HISTORY_RANGES = [
   { key: '1', label: '24H' },
   { key: '7', label: '7D' },
   { key: '30', label: '30D' },
   { key: '60', label: '60D' },
+  { key: '365', label: '1Y' },
+  { key: '730', label: '2Y' },
 ];
 
 const FIXED_YIELD_TOKEN_AMOUNTS = {
@@ -66,17 +69,43 @@ function getCoinbaseGranularity(days) {
   return 86400;
 }
 
-function buildCoinbaseCandlesUrl(productId, days) {
+function buildCoinbaseCandlesUrls(productId, days) {
   const granularity = getCoinbaseGranularity(Number(days));
   const end = Math.floor(Date.now() / 1000);
   const start = end - Number(days) * 24 * 60 * 60;
-  const params = new URLSearchParams({
-    granularity: String(granularity),
-    start: String(start),
-    end: String(end),
-  });
+  const chunkDuration = granularity * (COINBASE_MAX_CANDLES_PER_REQUEST - 1);
+  const urls = [];
 
-  return `https://api.exchange.coinbase.com/products/${productId}/candles?${params.toString()}`;
+  for (let chunkStart = start; chunkStart < end; chunkStart += chunkDuration) {
+    const chunkEnd = Math.min(chunkStart + chunkDuration, end);
+    const params = new URLSearchParams({
+      granularity: String(granularity),
+      start: String(chunkStart),
+      end: String(chunkEnd),
+    });
+    urls.push(`https://api.exchange.coinbase.com/products/${productId}/candles?${params.toString()}`);
+  }
+
+  return urls;
+}
+
+async function fetchCoinbaseCandles(productId, days) {
+  const urls = buildCoinbaseCandlesUrls(productId, days);
+  const candles = [];
+
+  // Fetch sequentially to avoid a burst of requests when loading multi-year ranges.
+  for (const url of urls) {
+    const response = await fetchWithRetry(url);
+    if (!response.ok) {
+      throw new Error(`Unable to load ${productId} historical market data (${response.status}).`);
+    }
+    const chunk = await response.json();
+    if (Array.isArray(chunk)) {
+      candles.push(...chunk);
+    }
+  }
+
+  return candles;
 }
 
 function candlesToPrices(candles) {
@@ -656,9 +685,12 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
   const historyTickValues = [historyMax, historyMin + historySpread / 2, historyMin];
   const formatHistoryLabel = (timestamp) => {
     const days = Number(historyRange);
-    const options = days === 1
-      ? { hour: '2-digit', minute: '2-digit' }
-      : { month: 'short', day: 'numeric' };
+    let options = { month: 'short', day: 'numeric' };
+    if (days === 1) {
+      options = { hour: '2-digit', minute: '2-digit' };
+    } else if (days > 60) {
+      options = { month: 'short', year: 'numeric' };
+    }
 
     return new Date(timestamp).toLocaleString(undefined, options);
   };
@@ -706,20 +738,9 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
       setHistoryError('');
 
       try {
-        const aeroHistoryUrl = buildCoinbaseCandlesUrl('AERO-USD', historyRange);
-        const veloHistoryUrl = buildCoinbaseCandlesUrl('VELO-USD', historyRange);
-        const [aeroHistoryRes, veloHistoryRes] = await Promise.all([
-          fetchWithRetry(aeroHistoryUrl),
-          fetchWithRetry(veloHistoryUrl),
-        ]);
-
-        if (!aeroHistoryRes.ok || !veloHistoryRes.ok) {
-          throw new Error(`Unable to load historical market data. AERO ${aeroHistoryRes.status}, VELO ${veloHistoryRes.status}`);
-        }
-
         const [aeroCandles, veloCandles] = await Promise.all([
-          aeroHistoryRes.json(),
-          veloHistoryRes.json(),
+          fetchCoinbaseCandles('AERO-USD', historyRange),
+          fetchCoinbaseCandles('VELO-USD', historyRange),
         ]);
 
         const bucketSize = getCoinbaseGranularity(Number(historyRange)) * 1000;
