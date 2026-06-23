@@ -647,7 +647,11 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
   const cheaperImpliedPrice = Math.min(aeroImpliedPrice, veloImpliedPrice);
   const richerImpliedPrice = Math.max(aeroImpliedPrice, veloImpliedPrice);
   const arbitrageSpread = richerImpliedPrice - cheaperImpliedPrice;
-  const arbitrageEdge = cheaperImpliedPrice > 0 ? (arbitrageSpread / cheaperImpliedPrice) * 100 : 0;
+  // Keep the percentage signed and use VELO as the reference price.
+  // A negative value means the AERO route is cheaper than the VELO route.
+  const arbitrageEdge = veloImpliedPrice > 0
+    ? ((aeroImpliedPrice - veloImpliedPrice) / veloImpliedPrice) * 100
+    : 0;
   const chartMax = Math.max(aeroImpliedPrice, veloImpliedPrice, 0.0001);
   const chartBars = [
     {
@@ -667,7 +671,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
       isBest: cheaperRoute === 'VELO',
     },
   ];
-  const historyMax = historySeries.length > 0 ? Math.max(...historySeries.map((point) => point.edge), 0.0001) : 1;
+  const historyMax = historySeries.length > 0 ? Math.max(...historySeries.map((point) => point.edge), 0) : 1;
   const historyMin = historySeries.length > 0 ? Math.min(...historySeries.map((point) => point.edge), 0) : 0;
   const historyLatest = historySeries.length > 0 ? historySeries[historySeries.length - 1].edge : 0;
   const historyPeak = historySeries.length > 0 ? Math.max(...historySeries.map((point) => point.edge)) : 0;
@@ -675,13 +679,14 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
     ? historySeries.reduce((sum, point) => sum + point.edge, 0) / historySeries.length
     : 0;
   const historySpread = Math.max(historyMax - historyMin, 0.0001);
+  const historyZeroY = 100 - ((0 - historyMin) / historySpread) * 100;
   const historyPath = historySeries.map((point, index) => {
     const x = (index / Math.max(historySeries.length - 1, 1)) * 100;
     const y = 100 - ((point.edge - historyMin) / historySpread) * 100;
     return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
   }).join(' ');
   const historyAreaPath = historySeries.length > 0
-    ? `${historyPath} L 100 100 L 0 100 Z`
+    ? `${historyPath} L 100 ${historyZeroY} L 0 ${historyZeroY} Z`
     : '';
   const historyTickValues = [historyMax, historyMin + historySpread / 2, historyMin];
   const formatHistoryLabel = (timestamp) => {
@@ -781,9 +786,9 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
           const historicalVeloPrice = veloMap.get(timestamp);
           const historicalAeroImplied = aeroPerNew * historicalAeroPrice;
           const historicalVeloImplied = veloPerNew * historicalVeloPrice;
-          const low = Math.min(historicalAeroImplied, historicalVeloImplied);
-          const high = Math.max(historicalAeroImplied, historicalVeloImplied);
-          const edge = low > 0 ? ((high - low) / low) * 100 : 0;
+          const edge = historicalVeloImplied > 0
+            ? ((historicalAeroImplied - historicalVeloImplied) / historicalVeloImplied) * 100
+            : 0;
 
           return {
             timestamp,
@@ -954,9 +959,9 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                 <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Absolute gap between the two implied new-token prices.</div>
               </div>
               <div style={{ border: '1px solid #d8dfeb', borderRadius: '14px', padding: '16px', background: 'linear-gradient(180deg, #ffffff 0%, #f9fbff 100%)' }}>
-                <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>Arbitrage Edge</div>
+                <div style={{ fontSize: '13px', color: '#5f6f8a', marginBottom: '8px' }}>AERO vs VELO</div>
                 <div style={{ fontSize: '28px', fontWeight: 700 }}>{arbitrageEdge.toFixed(2)}%</div>
-                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>Buy through {cheaperRoute}, benchmark against {richerRoute}&apos;s richer implied valuation.</div>
+                <div style={{ marginTop: '8px', color: '#5f6f8a', fontSize: '14px' }}>AERO implied price relative to VELO; negative means AERO is cheaper.</div>
               </div>
             </div>
 
@@ -982,7 +987,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                 ))}
               </div>
               <p style={{ marginBottom: 0, color: '#5f6f8a' }}>
-                {cheaperRoute} currently offers the cheaper synthetic entry into the merged token. The implied-price gap is {formatCurrency(arbitrageSpread)} or {arbitrageEdge.toFixed(2)}%.
+                {cheaperRoute} currently offers the cheaper synthetic entry into the merged token. The absolute price gap is {formatCurrency(arbitrageSpread)}; AERO is {arbitrageEdge.toFixed(2)}% relative to VELO.
               </p>
             </div>
           </div>
@@ -996,9 +1001,9 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
               <div>
-                <h2 style={{ margin: 0 }}>Historical Arbitrage %</h2>
+                <h2 style={{ margin: 0 }}>Historical AERO vs VELO %</h2>
                 <p style={{ margin: '8px 0 0', color: '#5f6f8a' }}>
-                  The line shows the historical percentage gap between the cheaper and richer implied merged-token route.
+                  The line shows AERO&apos;s implied merged-token price relative to VELO. Negative values mean AERO was cheaper.
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -1105,7 +1110,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                           <g transform={`translate(${hoveredHistoryX > 540 ? hoveredHistoryX - 190 : hoveredHistoryX + 12} ${Math.min(Math.max(hoveredHistoryY - 66, 44), 188)})`}>
                             <rect width="178" height="54" rx="10" fill="#172033" opacity="0.94" />
                             <text x="12" y="21" fill="#c7d2fe" fontSize="12">{formatHistoryTooltipLabel(hoveredHistoryPoint.timestamp)}</text>
-                            <text x="12" y="42" fill="#fff" fontSize="13" fontWeight="700">Arbitrage: {hoveredHistoryPoint.edge.toFixed(2)}%</text>
+                            <text x="12" y="42" fill="#fff" fontSize="13" fontWeight="700">AERO vs VELO: {hoveredHistoryPoint.edge.toFixed(2)}%</text>
                           </g>
                         </g>
                       )}
