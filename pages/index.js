@@ -13,6 +13,7 @@ const HISTORY_RANGES = [
   { key: '60', label: '60D' },
   { key: '365', label: '1Y' },
   { key: '730', label: '2Y' },
+  { key: '1095', label: '3Y' },
 ];
 
 const FIXED_YIELD_TOKEN_AMOUNTS = {
