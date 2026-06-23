@@ -620,6 +620,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
   const [historySeries, setHistorySeries] = useState([]);
   const [historyStatus, setHistoryStatus] = useState('idle');
   const [historyError, setHistoryError] = useState('');
+  const [hoveredHistoryIndex, setHoveredHistoryIndex] = useState(null);
 
   const formatCurrency = (value, digits = 4) => (
     `$${Number.isFinite(value) ? value.toLocaleString(undefined, {
@@ -693,6 +694,27 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
     }
 
     return new Date(timestamp).toLocaleString(undefined, options);
+  };
+  const formatHistoryTooltipLabel = (timestamp) => new Date(timestamp).toLocaleString(undefined, Number(historyRange) === 1
+    ? { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+    : { year: 'numeric', month: 'short', day: 'numeric' });
+  const hoveredHistoryPoint = hoveredHistoryIndex === null ? null : historySeries[hoveredHistoryIndex];
+  const hoveredHistoryX = hoveredHistoryIndex === null
+    ? null
+    : 72 + (hoveredHistoryIndex / Math.max(historySeries.length - 1, 1)) * 648;
+  const hoveredHistoryY = hoveredHistoryPoint
+    ? 40 + (100 - ((hoveredHistoryPoint.edge - historyMin) / historySpread) * 100) * 2.08
+    : null;
+
+  const handleHistoryPointerMove = (event) => {
+    if (historySeries.length < 2) {
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const svgX = ((event.clientX - rect.left) / rect.width) * 760;
+    const chartRatio = Math.min(Math.max((svgX - 72) / 648, 0), 1);
+    setHoveredHistoryIndex(Math.round(chartRatio * (historySeries.length - 1)));
   };
 
   useEffect(() => {
@@ -984,7 +1006,10 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                   <button
                     key={range.key}
                     type="button"
-                    onClick={() => setHistoryRange(range.key)}
+                    onClick={() => {
+                      setHoveredHistoryIndex(null);
+                      setHistoryRange(range.key);
+                    }}
                     style={{
                       padding: '9px 14px',
                       borderRadius: '999px',
@@ -1025,7 +1050,14 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
               {historyStatus === 'ready' && historySeries.length > 1 && (
                 <>
                   <div style={{ width: '100%', overflowX: 'auto' }}>
-                    <svg viewBox="0 0 760 320" style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="Historical arbitrage percent chart">
+                    <svg
+                      viewBox="0 0 760 320"
+                      style={{ width: '100%', height: 'auto', display: 'block', touchAction: 'pan-y' }}
+                      role="img"
+                      aria-label="Historical arbitrage percent chart"
+                      onPointerMove={handleHistoryPointerMove}
+                      onPointerLeave={() => setHoveredHistoryIndex(null)}
+                    >
                       <rect x="0" y="0" width="760" height="320" rx="24" fill="#fbfcff" />
                       {[52, 140, 228].map((y, index) => (
                         <g key={y}>
@@ -1066,6 +1098,17 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                         }
                         return null;
                       })}
+                      {hoveredHistoryPoint && hoveredHistoryX !== null && hoveredHistoryY !== null && (
+                        <g pointerEvents="none">
+                          <line x1={hoveredHistoryX} y1="40" x2={hoveredHistoryX} y2="248" stroke="rgba(23, 32, 51, 0.3)" />
+                          <circle cx={hoveredHistoryX} cy={hoveredHistoryY} r="4" fill="#2563eb" stroke="#fff" strokeWidth="2" />
+                          <g transform={`translate(${hoveredHistoryX > 540 ? hoveredHistoryX - 190 : hoveredHistoryX + 12} ${Math.min(Math.max(hoveredHistoryY - 66, 44), 188)})`}>
+                            <rect width="178" height="54" rx="10" fill="#172033" opacity="0.94" />
+                            <text x="12" y="21" fill="#c7d2fe" fontSize="12">{formatHistoryTooltipLabel(hoveredHistoryPoint.timestamp)}</text>
+                            <text x="12" y="42" fill="#fff" fontSize="13" fontWeight="700">Arbitrage: {hoveredHistoryPoint.edge.toFixed(2)}%</text>
+                          </g>
+                        </g>
+                      )}
                     </svg>
                   </div>
                   <p style={{ marginBottom: 0, color: '#5f6f8a' }}>
