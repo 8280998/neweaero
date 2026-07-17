@@ -616,7 +616,6 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
   const [veloPrice, setVeloPrice] = useState(initialVeloPrice);
   const [aeroAmount, setAeroAmount] = useState(10000);
   const [veloAmount, setVeloAmount] = useState(200000);
-  const [totalNewTokens, setTotalNewTokens] = useState(2000000000); // Default 2 billion
   const [historyRange, setHistoryRange] = useState('7');
   const [historySeries, setHistorySeries] = useState([]);
   const [historyStatus, setHistoryStatus] = useState('idle');
@@ -631,11 +630,15 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
   );
 
   // Merger calculations
-  const aeroAllocation = totalNewTokens * 0.945;
+  // Aerodrome positions migrate 1-1, so total AERO supply at launch is
+  // derived from Aerodrome's supply (Aerodrome supply / 94.5%). Velodrome's
+  // supply migrates into the remaining fixed 5.5% allocation.
+  const aeroAllocation = aeroSupply;
+  const totalNewTokens = aeroSupply > 0 ? aeroSupply / 0.945 : 0;
   const veloAllocation = totalNewTokens * 0.055;
 
-  const aeroPerNew = aeroSupply / aeroAllocation;
-  const veloPerNew = veloSupply / veloAllocation;
+  const aeroPerNew = 1;
+  const veloPerNew = veloAllocation > 0 ? veloSupply / veloAllocation : 0;
 
   const aeroImpliedPrice = aeroPerNew * aeroPrice;
   const veloImpliedPrice = veloPerNew * veloPrice;
@@ -837,10 +840,6 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
     setVeloAmount(parseFloat(e.target.value) || 0);
   };
 
-  const handleTotalNewTokensChange = (e) => {
-    setTotalNewTokens(parseFloat(e.target.value) || 10000000000);
-  };
-
   return (
     <div style={{
       fontFamily: 'Arial, sans-serif',
@@ -869,11 +868,7 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
               <span>Enter VELO Amount</span>
               <input type="number" id="velo-amount" value={veloAmount} onChange={handleVeloAmountChange} min="0" style={{ padding: '10px 12px', borderRadius: '10px', border: '1px solid #d8dfeb' }} />
             </label>
-            <label htmlFor="total-new-tokens" style={{ display: 'grid', gap: '8px', color: '#5f6f8a' }}>
-              <span>Enter Total New Tokens</span>
-              <input type="number" id="total-new-tokens" value={totalNewTokens} onChange={handleTotalNewTokensChange} min="0" style={{ padding: '10px 12px', borderRadius: '10px', border: '1px solid #d8dfeb' }} />
-            </label>
-          </div>
+</div>
         </div>
         <div id="results" style={{ display: 'grid', gap: '20px' }}>
           <div style={{
@@ -933,7 +928,8 @@ export default function Home({ initialAeroPrice, initialVeloPrice, aeroSupply, v
                 </tbody>
               </table>
             </div>
-            <h2>Merger Allocations (Based on Custom Total New Tokens)</h2>
+            <h2>Merger Allocations (94.5% AERO / 5.5% VELO Migration)</h2>
+            <p>Total AERO Supply at Launch: {totalNewTokens.toLocaleString(undefined, { maximumFractionDigits: 0 })} tokens (Aerodrome supply ÷ 94.5%)</p>
             <p>AERO Allocation: {aeroAllocation.toLocaleString()} tokens (94.5%)</p>
             <p>VELO Allocation: {veloAllocation.toLocaleString()} tokens (5.5%)</p>
             <h2>Total New Tokens You Can Get</h2>
